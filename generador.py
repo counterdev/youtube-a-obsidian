@@ -241,6 +241,22 @@ def nota_base(cliente, modelo, prompt_a, transcripcion_md, avisar=None):
     return _pedir(cliente, modelo, sistema, mensajes, avisar)
 
 
+def contar_ideas_clave(nota_md: str) -> int | None:
+    """
+    Cuenta las ideas clave de la nota base.
+
+    El Prompt B pide una pregunta por idea más 3 de aplicación, y contar es
+    justo lo que a un modelo se le desvía. Contarlas aquí y darle el número
+    hecho convierte una instrucción en un dato.
+    """
+    seccion = re.search(r"^#+ Ideas clave\s*$(.*?)(?=^#+ )", nota_md,
+                        re.MULTILINE | re.DOTALL)
+    if not seccion:
+        return None
+    total = len(re.findall(r"^-\s+\*\*", seccion.group(1), re.MULTILINE))
+    return total or None
+
+
 def capa_estudio(cliente, modelo, prompt_b, nota_md, avisar=None):
     """Aplica el Prompt B sobre la nota base y devuelve el markdown del repaso."""
     sistema = (
@@ -249,6 +265,15 @@ def capa_estudio(cliente, modelo, prompt_b, nota_md, avisar=None):
         + AJUSTE_B
         + f"\n\nLa fecha de hoy es {date.today().isoformat()}."
     )
+
+    ideas = contar_ideas_clave(nota_md)
+    if ideas:
+        sistema += (
+            f"\n\nLa nota base trae exactamente {ideas} ideas clave, ya contadas. "
+            f"Genera {ideas} preguntas sobre ellas, una por idea y en el mismo "
+            f"orden, más las 3 de aplicación al final: {ideas + 3} en total, "
+            f"numeradas de P1 a P{ideas + 3}."
+        )
     mensajes = [{
         "role": "user",
         "content": "Aquí comienza la nota base:\n\n---\n\n" + nota_md,

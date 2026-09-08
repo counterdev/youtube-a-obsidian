@@ -28,9 +28,14 @@ limpia y los deja en la bóveda. Sirve tal cual para pegar en cualquier chat.
 
 **Notas completas** — genera además la nota base y el repaso llamando a la API de
 Claude. Necesita una API key de Anthropic, que consigues en
-[console.anthropic.com](https://console.anthropic.com/settings/keys). Es de pago
-por uso: un video de cinco minutos cuesta alrededor de US$ 0,05 con Opus 5, o
-cerca de US$ 0,02 con Sonnet 5. La app te muestra el gasto de cada tanda.
+[console.anthropic.com](https://console.anthropic.com/settings/keys), **creada dentro
+de un espacio de trabajo**: una clave de organización exige además el ID del
+workspace, que se pega en el campo correspondiente.
+
+Es de pago por uso. Medido sobre una charla TED de 16 minutos con 2.455 palabras de
+transcripción: **US$ 0,43 con Opus 5**, contando las dos llamadas. Da del orden de
+US$ 0,03 por minuto de video; Sonnet 5 cuesta alrededor de la mitad. La app informa
+el gasto real de cada tanda al terminar.
 
 Tu clave se guarda solo en tu equipo, en `%APPDATA%\NotaVideo\config.json`, y no
 se envía a ningún sitio salvo a la API de Anthropic.
