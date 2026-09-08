@@ -1,0 +1,6 @@
+# Motor de descarga de subtitulos. Conviene mantenerlo al dia:
+# YouTube cambia seguido y yt-dlp publica versiones casi cada semana.
+yt-dlp>=2026.08.19
+
+# Solo se usa en el modo de notas completas.
+anthropic>=1.0.0

@@ -1,0 +1,16 @@
+# Entorno y compilacion
+.venv/
+build/
+dist/
+*.spec.bak
+__pycache__/
+*.py[cod]
+
+# Configuracion local: guarda la API key, nunca debe subirse
+config.json
+.env
+
+# Salidas de prueba
+*.vtt
+*.info.json
+salida/
