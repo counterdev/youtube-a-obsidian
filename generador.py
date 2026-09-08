@@ -50,6 +50,14 @@ ideas clave y en la estructura del video, y nunca inventes una que no esté en e
 
 La regla de continuación por respuesta larga no aplica: dispones de espacio suficiente,
 así que entrega la nota completa y no escribas el marcador CONTINÚA DESDE.
+
+Si la transcripción viene en otro idioma —el campo `idioma_subs` del frontmatter lo
+indica—, la nota se escribe igualmente en español de Chile: traduce el contenido al
+redactarla. Traducir no es interpretar, así que la regla de fidelidad sigue mandando:
+no completes lo que el video no dice ni resuelvas ambigüedades a tu favor. Conserva en
+su idioma original los nombres propios, los títulos de obras y los términos técnicos
+sin equivalente asentado, con la traducción entre paréntesis la primera vez si ayuda.
+Si una frase resulta ambigua al traducirla, regístrala en «Problemas de transcripción».
 """
 
 AJUSTE_B = """

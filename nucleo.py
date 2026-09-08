@@ -167,6 +167,12 @@ def limpiar_nombre(nombre: str) -> str:
     return nombre[:120] or "video"
 
 
+def _preferencias(langs: str) -> list[str]:
+    """Convierte «es.*,en» en una lista de prefijos por orden de preferencia."""
+    return [p.strip().replace(".*", "").lower()
+            for p in langs.split(",") if p.strip()]
+
+
 def _descargar(url, langs, carpeta, automaticos):
     """Una pasada de yt-dlp. Devuelve (info, lista de .vtt encontrados)."""
     try:
@@ -219,11 +225,26 @@ def obtener(url: str, langs: str = IDIOMAS_POR_DEFECTO,
             raise ErrorTranscripcion(_explicar(exc)) from exc
 
         origen = "manuales (del autor)"
+        preferencias = _preferencias(langs)
 
         if not vtts:
-            aviso("No hay subtítulos del autor. Usando los automáticos…")
+            # En los automaticos, cualquier idioma distinto del original es una
+            # traduccion automatica de YouTube hecha sobre una transcripcion
+            # tambien automatica. Se degrada dos veces. Conviene traer el idioma
+            # original y dejar que el modelo traduzca, que lo hace mejor y con
+            # todo el contexto delante.
+            original = (info.get("language") or "").split("-")[0].strip().lower()
+            if original:
+                aviso(f"No hay subtítulos del autor. Usando los automáticos "
+                      f"en el idioma original del video ({original})…")
+                langs_auto = f"{original}-orig,{original},{langs}"
+                preferencias = _preferencias(langs_auto)
+            else:
+                aviso("No hay subtítulos del autor. Usando los automáticos…")
+                langs_auto = langs
+
             try:
-                info, vtts = _descargar(url, langs, carpeta, automaticos=True)
+                info, vtts = _descargar(url, langs_auto, carpeta, automaticos=True)
             except Exception as exc:
                 raise ErrorTranscripcion(_explicar(exc)) from exc
             origen = "automáticos de YouTube"
@@ -236,10 +257,7 @@ def obtener(url: str, langs: str = IDIOMAS_POR_DEFECTO,
                 "realmente tiene subtítulos disponibles."
             )
 
-        # Si bajo varios idiomas, se respeta el orden pedido.
-        preferencias = [p.strip().replace(".*", "").lower()
-                        for p in langs.split(",") if p.strip()]
-
+        # Si bajo varios idiomas, se respeta el orden de preferencia.
         def prioridad(p: Path) -> int:
             codigo = p.stem.split(".")[-1].lower()
             for i, pref in enumerate(preferencias):

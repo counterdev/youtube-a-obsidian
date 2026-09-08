@@ -90,6 +90,15 @@ multiplica el texto y degrada el resultado. Medido sobre un archivo real: 14.807
 los inventa el modelo. Si un video no los trae, las notas simplemente no los
 incluyen.
 
+**Videos en otro idioma.** Las notas salen siempre en español, aunque el video esté
+en inglés: la transcripción cruda conserva el idioma original y la traducción ocurre
+al redactar la nota. Cuando no hay subtítulos del autor, la app pide los automáticos
+**en el idioma original del video**, no en español. Puede parecer al revés, pero las
+pistas en español que YouTube ofrece para un video en inglés son una traducción
+automática hecha sobre una transcripción también automática: se degrada dos veces.
+Traducir a partir del original, con el contexto completo delante, da un resultado
+bastante mejor.
+
 ## Limitaciones
 
 - Solo videos que tengan subtítulos, propios o automáticos. No transcribe audio.
