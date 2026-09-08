@@ -22,7 +22,7 @@ import generador
 import nucleo
 
 APP = "NotaVideo"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 REPO = "https://github.com/counterdev/youtube-a-obsidian"
 
 CARPETA_NOTAS = "Videos"

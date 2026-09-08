@@ -6,6 +6,10 @@ capa de repaso con preguntas de recuperación activa.
 
 App de escritorio para Windows, en un `.exe` único sin instalación.
 
+<p align="center">
+  <img src="docs/pantalla.png" alt="Ventana de NotaVideo" width="640">
+</p>
+
 ---
 
 ## Qué hace
