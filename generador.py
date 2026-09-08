@@ -89,7 +89,7 @@ def extraer_prompt(texto: str) -> str:
     return texto.strip()
 
 
-def crear_cliente(api_key: str):
+def crear_cliente(api_key: str, workspace_id: str = ""):
     try:
         import anthropic
     except ImportError as exc:
@@ -100,7 +100,14 @@ def crear_cliente(api_key: str):
     if not api_key or not api_key.strip():
         raise ErrorGeneracion("No hay API key configurada.")
 
-    return anthropic.Anthropic(api_key=api_key.strip())
+    # Las claves de organizacion no estan asociadas a un espacio de trabajo, y la
+    # API exige que cada peticion diga a cual cargar el uso.
+    cabeceras = {}
+    if workspace_id and workspace_id.strip():
+        cabeceras["anthropic-workspace-id"] = workspace_id.strip()
+
+    return anthropic.Anthropic(api_key=api_key.strip(),
+                               default_headers=cabeceras or None)
 
 
 def _pedir(cliente, modelo, sistema, mensajes, avisar=None):
@@ -148,6 +155,17 @@ def _pedir(cliente, modelo, sistema, mensajes, avisar=None):
             if exc.status_code >= 500:
                 raise ErrorGeneracion(
                     "La API de Claude tuvo un problema temporal. Intenta de nuevo."
+                ) from exc
+            if "workspace" in str(exc).lower():
+                raise ErrorGeneracion(
+                    "Tu API key es de organización y no está asignada a un espacio "
+                    "de trabajo, así que la API no sabe a cuál cargar el uso.\n\n"
+                    "Dos salidas:\n"
+                    "· Pega el ID del espacio de trabajo en el campo «Workspace ID» "
+                    "(está en la URL de console.anthropic.com al abrirlo, y empieza "
+                    "con wrkspc_).\n"
+                    "· O crea una API key nueva dentro de un espacio de trabajo, y "
+                    "deja ese campo vacío."
                 ) from exc
             raise ErrorGeneracion(f"Error de la API: {exc.message}") from exc
         except anthropic.APIConnectionError as exc:

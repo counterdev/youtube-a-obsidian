@@ -159,19 +159,31 @@ class Aplicacion(ttk.Frame):
         ttk.Checkbutton(self.marco_ia, text="Ver", variable=self.var_ver,
                         command=self._alternar_key).grid(row=0, column=2)
 
-        ttk.Label(self.marco_ia, text="Modelo:").grid(row=1, column=0, sticky="w",
+        # Solo hace falta para claves de organizacion, que no traen espacio de
+        # trabajo asociado. Con una clave normal se deja vacio.
+        ttk.Label(self.marco_ia, text="Workspace:").grid(row=1, column=0, sticky="w",
+                                                         pady=(8, 0))
+        self.var_workspace = tk.StringVar(value=self.cfg.get("workspace_id", ""))
+        ttk.Entry(self.marco_ia, textvariable=self.var_workspace).grid(
+            row=1, column=1, columnspan=2, sticky="ew", padx=(6, 0), pady=(8, 0))
+        ttk.Label(self.marco_ia,
+                  text="Opcional: solo si tu clave es de organización (wrkspc_…)",
+                  foreground="#666").grid(row=2, column=1, columnspan=2,
+                                          sticky="w", padx=(6, 0))
+
+        ttk.Label(self.marco_ia, text="Modelo:").grid(row=3, column=0, sticky="w",
                                                       pady=(8, 0))
         self.var_modelo = tk.StringVar(
             value=self.cfg.get("modelo", list(generador.MODELOS)[0]))
         ttk.Combobox(self.marco_ia, textvariable=self.var_modelo, state="readonly",
-                     values=list(generador.MODELOS)).grid(row=1, column=1,
+                     values=list(generador.MODELOS)).grid(row=3, column=1,
                                                           columnspan=2, sticky="ew",
                                                           padx=(6, 0), pady=(8, 0))
 
         enlace = ttk.Label(self.marco_ia,
                            text="Conseguir una API key en console.anthropic.com",
                            foreground="#0a58ca", cursor="hand2")
-        enlace.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        enlace.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
         enlace.bind("<Button-1>",
                     lambda _e: webbrowser.open("https://console.anthropic.com/settings/keys"))
         fila += 1
@@ -297,6 +309,7 @@ class Aplicacion(ttk.Frame):
             "modo": self.var_modo.get(),
             "modelo": self.var_modelo.get(),
             "api_key": clave,
+            "workspace_id": self.var_workspace.get().strip(),
         })
         guardar_config(self.cfg)
 
@@ -305,11 +318,14 @@ class Aplicacion(ttk.Frame):
         self.progreso["value"] = 0
         self.progreso["maximum"] = len(urls) * (3 if completo else 1)
 
-        hilo = threading.Thread(target=self._trabajar,
-                                args=(urls, boveda, completo, clave), daemon=True)
+        hilo = threading.Thread(
+            target=self._trabajar,
+            args=(urls, boveda, completo, clave, self.var_workspace.get().strip()),
+            daemon=True)
         hilo.start()
 
-    def _trabajar(self, urls, boveda: Path, completo: bool, clave: str) -> None:
+    def _trabajar(self, urls, boveda: Path, completo: bool, clave: str,
+                  workspace: str = "") -> None:
         pasos = 0
         gastado = 0.0
         modelo = generador.MODELOS.get(self.var_modelo.get(),
@@ -318,7 +334,7 @@ class Aplicacion(ttk.Frame):
         cliente = None
         if completo:
             try:
-                cliente = generador.crear_cliente(clave)
+                cliente = generador.crear_cliente(clave, workspace)
             except generador.ErrorGeneracion as exc:
                 self._avisar(str(exc), "error")
                 self.mensajes.put(("fin", None))
