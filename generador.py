@@ -156,16 +156,27 @@ def _pedir(cliente, modelo, sistema, mensajes, avisar=None):
                 raise ErrorGeneracion(
                     "La API de Claude tuvo un problema temporal. Intenta de nuevo."
                 ) from exc
-            if "workspace" in str(exc).lower():
+            detalle = str(exc).lower()
+            if "must be a valid workspace" in detalle:
+                raise ErrorGeneracion(
+                    "El valor del campo «Workspace» no es un ID válido.\n\n"
+                    "Los identificadores de espacio de trabajo empiezan con "
+                    "«wrkspc_». Si copiaste un código con guiones del tipo "
+                    "98bc9feb-a7bf-…, ese no es.\n\n"
+                    "Lo más simple es dejar ese campo vacío y crear una API key "
+                    "nueva dentro de un espacio de trabajo: en console.anthropic.com, "
+                    "Settings → API keys → Create Key, y ahí eliges el workspace."
+                ) from exc
+            if "not scoped to a workspace" in detalle:
                 raise ErrorGeneracion(
                     "Tu API key es de organización y no está asignada a un espacio "
                     "de trabajo, así que la API no sabe a cuál cargar el uso.\n\n"
-                    "Dos salidas:\n"
-                    "· Pega el ID del espacio de trabajo en el campo «Workspace ID» "
-                    "(está en la URL de console.anthropic.com al abrirlo, y empieza "
-                    "con wrkspc_).\n"
-                    "· O crea una API key nueva dentro de un espacio de trabajo, y "
-                    "deja ese campo vacío."
+                    "Lo más simple: crea una API key nueva dentro de un espacio de "
+                    "trabajo, en console.anthropic.com → Settings → API keys → "
+                    "Create Key, eligiendo el workspace. Con esa clave, deja el "
+                    "campo «Workspace» vacío.\n\n"
+                    "Si prefieres conservar la clave actual, pega en ese campo el ID "
+                    "del espacio de trabajo, que empieza con «wrkspc_»."
                 ) from exc
             raise ErrorGeneracion(f"Error de la API: {exc.message}") from exc
         except anthropic.APIConnectionError as exc:
