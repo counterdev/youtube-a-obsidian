@@ -14,3 +14,12 @@ config.json
 *.vtt
 *.info.json
 salida/
+
+# ffmpeg se descarga para empaquetarlo, no se versiona
+ffmpeg.exe
+ffprobe.exe
+ffmpeg.zip
+ffmpeg-tmp/
+
+# Cache de herramientas locales
+.atl/
