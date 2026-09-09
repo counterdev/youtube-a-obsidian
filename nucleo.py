@@ -8,6 +8,8 @@ una transcripcion limpia con marcas de tiempo reales.
 from __future__ import annotations
 
 import re
+import shutil
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,9 +27,18 @@ SONIDO_RE = re.compile(
 IDIOMAS_POR_DEFECTO = "es.*,es,en.*,en"
 VENTANA_POR_DEFECTO = 45
 
+# Alturas de video ofrecidas, mas la opcion de guardar solo el audio.
+CALIDAD_AUDIO = "audio"
+CALIDADES = ("1080", "720", "480", CALIDAD_AUDIO)
+CALIDAD_POR_DEFECTO = "1080"
+
 
 class ErrorTranscripcion(Exception):
     """Falla esperable al obtener una transcripcion, con mensaje para el usuario."""
+
+
+class ErrorDescarga(Exception):
+    """Falla esperable al descargar el video, con mensaje para el usuario."""
 
 
 @dataclass
@@ -327,11 +338,152 @@ def obtener(url: str, langs: str = IDIOMAS_POR_DEFECTO,
         )
 
 
+def ruta_ffmpeg() -> str | None:
+    """
+    Ubica ffmpeg: el que viaja dentro del .exe, o el que haya en el sistema.
+
+    Por encima de 360p YouTube sirve el video y el audio en pistas separadas,
+    asi que sin ffmpeg no hay forma de unirlas en un archivo unico.
+    """
+    empaquetado = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+    if (empaquetado / "ffmpeg.exe").is_file() or (empaquetado / "ffmpeg").is_file():
+        return str(empaquetado)
+
+    delsistema = shutil.which("ffmpeg")
+    if delsistema:
+        return str(Path(delsistema).parent)
+    return None
+
+
+def _formato(calidad: str, con_ffmpeg: bool) -> str:
+    """Arma el selector de formato de yt-dlp para la calidad pedida."""
+    if calidad == CALIDAD_AUDIO:
+        return "bestaudio[ext=m4a]/bestaudio"
+
+    if con_ffmpeg:
+        # Pista de video y pista de audio por separado, que luego se unen.
+        return (f"bestvideo[height<={calidad}][ext=mp4]+bestaudio[ext=m4a]/"
+                f"bestvideo[height<={calidad}]+bestaudio/"
+                f"best[height<={calidad}]/best")
+
+    # Sin ffmpeg solo sirven los formatos que ya traen audio y video juntos.
+    return f"best[height<={calidad}][ext=mp4]/best[height<={calidad}]/best"
+
+
+def _ya_descargado(carpeta: Path, nombre: str) -> Path | None:
+    """
+    Busca un archivo ya bajado con ese nombre.
+
+    Se compara el nombre entero en vez de usar glob porque los titulos de
+    YouTube traen corchetes, y glob los interpreta como comodines.
+    """
+    if not carpeta.is_dir():
+        return None
+    for hijo in carpeta.iterdir():
+        if (hijo.is_file() and hijo.stem == nombre
+                and hijo.suffix.lower() not in (".part", ".ytdl")):
+            return hijo
+    return None
+
+
+def descargar_video(url: str, carpeta: Path, nombre: str,
+                    calidad: str = CALIDAD_POR_DEFECTO, avisar=None) -> Path:
+    """
+    Baja el video a `carpeta` con el nombre indicado y devuelve su ruta.
+
+    Recibe el nombre desde fuera para que el archivo quede junto a la nota y
+    con el mismo titulo, que es lo que permite incrustarlo en Obsidian.
+    """
+    def aviso(texto):
+        if avisar:
+            avisar(texto)
+
+    try:
+        import yt_dlp
+    except ImportError as exc:  # pragma: no cover
+        raise ErrorDescarga(
+            "Falta el motor de descarga (yt-dlp).\n"
+            "Instálalo con: pip install yt-dlp"
+        ) from exc
+
+    carpeta.mkdir(parents=True, exist_ok=True)
+
+    # Bajar de nuevo un archivo de cientos de MB por repetir una URL no tiene
+    # sentido: si ya esta, se informa y se sigue.
+    existente = _ya_descargado(carpeta, nombre)
+    if existente:
+        aviso(f"El video ya estaba descargado: {existente.name}")
+        return existente
+
+    ffmpeg = ruta_ffmpeg()
+    solo_audio = calidad == CALIDAD_AUDIO
+
+    if not ffmpeg and not solo_audio:
+        aviso("No se encontró ffmpeg: se bajará la mejor calidad que YouTube "
+              "entregue con audio y video ya unidos, normalmente 360p.")
+
+    # yt-dlp llama al hook muchas veces por segundo; se avisa cada 25%.
+    umbral = [25.0]
+
+    def progreso(estado):
+        if estado.get("status") == "finished":
+            umbral[0] = 25.0
+            return
+        if estado.get("status") != "downloading":
+            return
+        total = estado.get("total_bytes") or estado.get("total_bytes_estimate")
+        if not total:
+            return
+        porcentaje = estado.get("downloaded_bytes", 0) / total * 100
+        if porcentaje >= umbral[0]:
+            aviso(f"Descargando… {int(umbral[0])}% de {total / 1048576:.1f} MB")
+            umbral[0] += 25
+
+    opciones = {
+        "format": _formato(calidad, bool(ffmpeg)),
+        "noplaylist": True,
+        "socket_timeout": 30,
+        "retries": 3,
+        "outtmpl": str(carpeta / f"{nombre}.%(ext)s"),
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "progress_hooks": [progreso],
+    }
+    if ffmpeg:
+        opciones["ffmpeg_location"] = ffmpeg
+        if not solo_audio:
+            opciones["merge_output_format"] = "mp4"
+
+    try:
+        with yt_dlp.YoutubeDL(opciones) as ydl:
+            ydl.extract_info(url, download=True)
+    except Exception as exc:
+        raise ErrorDescarga(_explicar(exc)) from exc
+
+    descargado = _ya_descargado(carpeta, nombre)
+    if not descargado:
+        raise ErrorDescarga(
+            "La descarga terminó pero no quedó ningún archivo en la bóveda.\n"
+            "Revisa que haya espacio en disco y permisos de escritura."
+        )
+    return descargado
+
+
 def _explicar(exc: Exception) -> str:
     """Traduce los errores mas comunes de yt-dlp a algo accionable."""
     texto = str(exc)
     bajo = texto.lower()
 
+    if "no space left" in bajo or "not enough space" in bajo or "errno 28" in bajo:
+        return ("No queda espacio en el disco donde está la bóveda. "
+                "Libera espacio o elige una calidad más baja.")
+    if "requested format" in bajo or "no video formats" in bajo:
+        return ("YouTube no ofrece este video en la calidad pedida. "
+                "Prueba con una calidad más baja en Opciones.")
+    if "ffmpeg" in bajo or "ffprobe" in bajo:
+        return ("Falló la unión de las pistas de video y audio. "
+                "Prueba con «solo audio» o con una calidad más baja.")
     if "private" in bajo or "sign in" in bajo:
         return ("El video es privado o exige iniciar sesión, así que no se "
                 "pueden leer sus subtítulos.")
@@ -346,7 +498,7 @@ def _explicar(exc: Exception) -> str:
         return "Falló la conexión segura con YouTube. Revisa tu conexión o antivirus."
 
     return (
-        "No se pudo obtener la transcripción.\n\n"
+        "No se pudo completar la operación con YouTube.\n\n"
         f"{texto[:500]}\n\n"
         "Si el problema persiste, suele deberse a que YouTube cambió algo y el "
         "motor de descarga quedó desactualizado. Descarga la versión más nueva "

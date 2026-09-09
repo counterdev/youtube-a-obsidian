@@ -14,13 +14,14 @@ App de escritorio para Windows, en un `.exe` único sin instalación.
 
 ## Qué hace
 
-Por cada video genera hasta tres archivos:
+Por cada video genera hasta cuatro archivos:
 
 | Archivo | Carpeta | Contenido |
 |---|---|---|
 | `<título> — transcripcion.md` | `Videos/Transcripciones/` | Transcripción limpia, en bloques de 45 s con marca de tiempo real |
 | `<título>.md` | `Videos/` | Nota base: idea central, ideas clave, conceptos enlazados, datos, limitaciones del contenido |
 | `<título> — Repaso.md` | `Videos/Repasos/` | Preguntas de recuperación activa con respuesta plegada, casos de aplicación y lista de comprobación |
+| `<título>.mp4` | `Videos/Adjuntos/` | El video en sí, si activas la descarga |
 
 Las notas usan enlaces internos `[[ ]]`, callouts de Obsidian y frontmatter con
 etiquetas, así que se integran al grafo desde el primer momento.
@@ -32,6 +33,32 @@ limpia y los deja en la bóveda. Sirve tal cual para pegar en cualquier chat.
 
 **Notas completas** — genera además la nota base y el repaso llamando a un modelo de
 IA. Necesita una API key del proveedor que elijas.
+
+## Descargar el video
+
+Marca **Descargar también el video a la bóveda** y el archivo queda en
+`Videos/Adjuntos/` con el mismo título que la transcripción, listo para incrustarlo
+en cualquier nota con `![[título.mp4]]`.
+
+La casilla es independiente del modo: puedes bajar el video sin gastar en IA, o
+generar las notas sin bajarlo. Elige entre 1080p, 720p, 480p o **solo audio**
+(`.m4a`), útil para escuchar de nuevo sin ocupar cientos de megas.
+
+Dos decisiones que notarás al usarlo:
+
+- **Un video ya descargado no se vuelve a bajar.** Si repites una URL, la app
+  detecta el archivo y sigue de largo, en vez de gastar otra vez el ancho de banda.
+- **Que falle la descarga no te cuesta las notas.** El video se baja en su propio
+  paso; si YouTube lo bloquea o se acaba el disco, las notas ya generadas se
+  conservan y el error queda en el registro.
+
+> [!warning] Ojo con el peso y con la sincronización
+> Una charla de una hora en 1080p ronda los 500 MB. Si tu bóveda se sincroniza con
+> Obsidian Sync, iCloud o Drive, conviene excluir `Videos/Adjuntos/` o usar la
+> opción de solo audio.
+
+Descarga videos que puedas usar legítimamente: los tuyos, los de licencia abierta o
+los que descargues para uso personal donde tu legislación lo permita.
 
 ## Proveedores
 
@@ -87,7 +114,7 @@ Para generar el ejecutable, `construir-exe.bat`.
 
 1. Pega una o varias URLs, una por línea.
 2. Elige la carpeta de tu bóveda de Obsidian.
-3. Elige el modo y presiona **Procesar**.
+3. Elige el modo, marca si quieres el video y presiona **Procesar**.
 
 ## Los prompts se pueden editar
 
@@ -134,6 +161,9 @@ bastante mejor.
 
 - Solo videos que tengan subtítulos, propios o automáticos. No transcribe audio.
 - Windows. El código es multiplataforma, pero el `.exe` y los `.bat` no.
+- El `.exe` pesa más de 100 MB porque lleva ffmpeg dentro. Sin ffmpeg, YouTube solo
+  entrega el video en la calidad que sirve con audio ya incorporado, unos 360p:
+  desde el código, `winget install yt-dlp.FFmpeg` te deja igual que el `.exe`.
 - YouTube cambia su sitio a menudo y el motor de descarga queda desactualizado. Si
   algo deja de funcionar, descarga la versión más reciente del `.exe`; desde el
   código, basta con `pip install -U yt-dlp`.
@@ -144,6 +174,14 @@ bastante mejor.
 ## Licencia
 
 MIT.
+
+## Novedades de la versión 1.3.0
+
+- Descarga opcional del video a `Videos/Adjuntos/`, en 1080p, 720p, 480p o solo audio.
+- ffmpeg viaja dentro del `.exe`, así que la calidad alta funciona sin instalar nada.
+- Un video ya descargado no se vuelve a bajar.
+- La descarga es un paso aparte: si falla, las notas generadas se conservan.
+- El modo consola acepta `--video` y `--calidad`.
 
 ## Correcciones de la versión 1.2.1
 

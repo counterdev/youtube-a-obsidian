@@ -21,6 +21,25 @@ echo  Tarda 2-4 minutos. Vuelve a ejecutarlo cada vez que
 echo  cambies el codigo.
 echo.
 
+rem ffmpeg viaja dentro del .exe: sin el, la descarga de videos queda
+rem limitada a la calidad que YouTube entregue ya combinada (unos 360p).
+if exist "ffmpeg.exe" goto :hay_ffmpeg
+where ffmpeg >nul 2>&1
+if not errorlevel 1 goto :hay_ffmpeg
+
+echo  [!] No se encontro ffmpeg en el sistema.
+echo      El .exe se construira igual, pero solo podra descargar
+echo      videos en la calidad baja que YouTube entrega ya combinada.
+echo.
+echo      Para incluirlo: winget install yt-dlp.FFmpeg
+echo      o deja ffmpeg.exe y ffprobe.exe junto a este archivo.
+echo.
+choice /c SN /n /m "  ¿Construir de todos modos? (S/N): "
+if errorlevel 2 exit /b 1
+echo.
+
+:hay_ffmpeg
+
 if not exist "%PY_EXE%" (
     echo  [X] No existe el entorno virtual.
     echo      Ejecuta primero iniciar.bat.
@@ -56,6 +75,8 @@ for %%F in ("%SALIDA%") do echo    %%~fF  (%%~zF bytes)
 echo.
 echo  Es un archivo unico y autonomo: se puede subir, enviar
 echo  o copiar tal cual. No necesita carpetas al lado.
+echo.
+echo  Lleva ffmpeg incorporado, por eso pesa mas de 100 MB.
 echo.
 
 choice /c SN /n /m "  ¿Abrir la carpeta ahora? (S/N): "

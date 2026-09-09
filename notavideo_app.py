@@ -25,13 +25,22 @@ import nucleo
 import proveedores
 
 APP = "NotaVideo"
-VERSION = "1.2.1"
+VERSION = "1.3.0"
 REPO = "https://github.com/counterdev/youtube-a-obsidian"
 
 CARPETA_NOTAS = "Videos"
 CARPETA_REPASOS = "Videos/Repasos"
 CARPETA_TRANSCRIPCIONES = "Videos/Transcripciones"
+CARPETA_ADJUNTOS = "Videos/Adjuntos"
 CARPETA_PLANTILLAS = "Plantillas"
+
+# Lo que ve el usuario en el desplegable, y el valor que entiende nucleo.
+CALIDADES = {
+    "1080p (recomendada)": "1080",
+    "720p": "720",
+    "480p (más liviana)": "480",
+    "Solo audio (m4a)": nucleo.CALIDAD_AUDIO,
+}
 
 NOMBRE_PROMPT_A = "Prompt A - Nota base de video.md"
 NOMBRE_PROMPT_B = "Prompt B - Capa de estudio.md"
@@ -125,6 +134,9 @@ class Aplicacion(ttk.Frame):
             "proveedor": self.var_proveedor.get(),
             "boveda": self.var_boveda.get().strip(),
             "modo": self.var_modo.get(),
+            "video": self.var_video.get(),
+            "calidad": CALIDADES.get(self.var_calidad.get(),
+                                     nucleo.CALIDAD_POR_DEFECTO),
             "workspace_id": self.var_workspace.get().strip(),
         })
         self.cfg.pop("api_key", None)
@@ -189,6 +201,25 @@ class Aplicacion(ttk.Frame):
         ttk.Radiobutton(marco_m, text="Solo transcripción (gratis)",
                         variable=self.var_modo, value="transcripcion",
                         command=self._alternar_modo).grid(row=1, column=0, sticky="w")
+
+        # La descarga del video es independiente del modo: se puede querer el
+        # archivo sin gastar en la IA, o al reves.
+        marco_v = ttk.Frame(marco_m)
+        marco_v.grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self.var_video = tk.BooleanVar(value=bool(self.cfg.get("video", False)))
+        ttk.Checkbutton(marco_v, text="Descargar también el video a la bóveda",
+                        variable=self.var_video,
+                        command=self._alternar_video).grid(row=0, column=0, sticky="w")
+        ttk.Label(marco_v, text="Calidad:").grid(row=0, column=1, sticky="w",
+                                                 padx=(14, 4))
+        guardada = self.cfg.get("calidad", nucleo.CALIDAD_POR_DEFECTO)
+        visible = next((k for k, v in CALIDADES.items() if v == guardada),
+                       list(CALIDADES)[0])
+        self.var_calidad = tk.StringVar(value=visible)
+        self.combo_calidad = ttk.Combobox(marco_v, textvariable=self.var_calidad,
+                                          state="readonly", width=20,
+                                          values=list(CALIDADES))
+        self.combo_calidad.grid(row=0, column=2, sticky="w")
         fila += 1
 
         # --- ajustes de IA
@@ -288,10 +319,16 @@ class Aplicacion(ttk.Frame):
 
         self._aplicar_proveedor(limpiar=True)
         self._alternar_modo()
+        self._alternar_video()
         self._escribir(f"{APP} {VERSION}. Pega una URL y presiona Procesar.")
 
     def _alternar_key(self) -> None:
         self.entrada_key.configure(show="" if self.var_ver.get() else "•")
+
+    def _alternar_video(self) -> None:
+        """El desplegable de calidad solo tiene sentido si se baja el video."""
+        self.combo_calidad.configure(
+            state="readonly" if self.var_video.get() else "disabled")
 
     def _alternar_modo(self) -> None:
         estado = "normal" if self.var_modo.get() == "completo" else "disabled"
@@ -421,6 +458,8 @@ class Aplicacion(ttk.Frame):
             return
 
         completo = self.var_modo.get() == "completo"
+        video = bool(self.var_video.get())
+        calidad = CALIDADES.get(self.var_calidad.get(), nucleo.CALIDAD_POR_DEFECTO)
         prov = proveedores.obtener(self.var_proveedor.get())
         if prov.editable:
             prov = replace(prov, base_url=self.var_url.get().strip())
@@ -450,6 +489,8 @@ class Aplicacion(ttk.Frame):
             "boveda": str(boveda),
             "modo": self.var_modo.get(),
             "modelo": self.var_modelo.get(),
+            "video": video,
+            "calidad": calidad,
             "workspace_id": self.var_workspace.get().strip(),
         })
         self.cfg.pop("api_key", None)
@@ -457,20 +498,24 @@ class Aplicacion(ttk.Frame):
 
         self.trabajando = True
         self.boton.configure(state="disabled", text="Procesando…")
+        por_url = (3 if completo else 1) + (1 if video else 0)
         self.progreso["value"] = 0
-        self.progreso["maximum"] = len(urls) * (3 if completo else 1)
+        self.progreso["maximum"] = len(urls) * por_url
 
         hilo = threading.Thread(
             target=self._trabajar,
             args=(urls, boveda, completo, clave, prov, modelo,
-                  self.var_workspace.get().strip()),
+                  self.var_workspace.get().strip(), video, calidad),
             daemon=True)
         hilo.start()
 
     def _trabajar(self, urls, boveda: Path, completo: bool, clave: str,
-                  prov, modelo: str, workspace: str = "") -> None:
+                  prov, modelo: str, workspace: str = "", video: bool = False,
+                  calidad: str = nucleo.CALIDAD_POR_DEFECTO) -> None:
+        por_url = (3 if completo else 1) + (1 if video else 0)
         pasos = 0
         failures = 0
+        fallos_video = 0
         gastado = 0.0
         tokens = 0
 
@@ -499,6 +544,19 @@ class Aplicacion(ttk.Frame):
                              f"{trans.palabras:,} palabras".replace(",", "."), "ok")
                 pasos += 1
                 self.mensajes.put(("progreso", pasos))
+
+                if video:
+                    try:
+                        archivo = nucleo.descargar_video(
+                            url, boveda / CARPETA_ADJUNTOS, nombre, calidad,
+                            avisar=lambda t: self._avisar("  " + t))
+                        self._avisar(f"  Video: {archivo.name}", "ok")
+                        self._avisar(f"  Para incrustarlo: ![[{archivo.name}]]")
+                    except nucleo.ErrorDescarga as exc:
+                        fallos_video += 1
+                        self._avisar(f"  {exc}", "error")
+                    pasos += 1
+                    self.mensajes.put(("progreso", pasos))
 
                 if not completo:
                     continue
@@ -553,11 +611,14 @@ class Aplicacion(ttk.Frame):
                 self._avisar("  Error inesperado:", "error")
                 self._avisar("  " + traceback.format_exc(limit=3), "error")
             finally:
-                pasos = indice * (3 if completo else 1)
+                pasos = indice * por_url
                 self.mensajes.put(("progreso", pasos))
 
         self._avisar(f"\nTerminados: {len(urls) - failures}. Con errores: {failures}.",
                      "aviso" if failures else "ok")
+        if fallos_video:
+            self._avisar(f"Videos que no se pudieron descargar: {fallos_video}.",
+                         "aviso")
         if cliente is not None:
             try:
                 cliente.close()
@@ -576,7 +637,7 @@ def modo_consola(argv: list[str]) -> int:
     """
     Uso sin ventana, para automatizar:
 
-        NotaVideo.exe --url <URL> --boveda <carpeta> [--log <archivo>]
+        NotaVideo.exe --url <URL> --boveda <carpeta> [--video] [--log <archivo>]
 
     Genera solo la transcripción. El resultado se escribe en el archivo de log,
     porque la aplicación se compila sin consola y no puede imprimir en pantalla.
@@ -587,6 +648,10 @@ def modo_consola(argv: list[str]) -> int:
     ap.add_argument("--url", required=True)
     ap.add_argument("--boveda", required=True)
     ap.add_argument("--langs", default=nucleo.IDIOMAS_POR_DEFECTO)
+    ap.add_argument("--video", action="store_true",
+                    help="descarga también el archivo de video")
+    ap.add_argument("--calidad", default=nucleo.CALIDAD_POR_DEFECTO,
+                    choices=list(nucleo.CALIDADES))
     ap.add_argument("--log", default=None)
     args = ap.parse_args(argv)
 
@@ -613,6 +678,13 @@ def modo_consola(argv: list[str]) -> int:
         registrar(f"OK subtítulos {trans.origen} ({trans.idioma})")
         registrar(f"OK {trans.palabras} palabras en {len(trans.bloques)} bloques")
         registrar(f"OK {destino}")
+
+        if args.video:
+            archivo = nucleo.descargar_video(
+                args.url, boveda / CARPETA_ADJUNTOS,
+                nucleo.limpiar_nombre(trans.titulo), args.calidad,
+                avisar=registrar)
+            registrar(f"OK {archivo}")
     except Exception as exc:
         registrar(f"ERROR {exc}")
         codigo = 1
@@ -628,8 +700,8 @@ def main() -> None:
 
     raiz = tk.Tk()
     raiz.title(f"{APP} — de YouTube a Obsidian")
-    raiz.geometry("760x720")
-    raiz.minsize(640, 600)
+    raiz.geometry("760x760")
+    raiz.minsize(640, 640)
 
     try:
         raiz.iconbitmap(str(ruta_recurso("icono.ico")))

@@ -3,6 +3,7 @@
 
 Genera un unico .exe autonomo. Se usa desde construir-exe.bat.
 """
+import shutil
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all
@@ -10,6 +11,26 @@ from PyInstaller.utils.hooks import collect_all
 BASE = Path(SPECPATH)
 
 datas, binaries, hiddenimports = [], [], []
+
+
+def buscar_ffmpeg(programa):
+    """Ubica un binario de ffmpeg: primero el del repo, luego el del sistema."""
+    local = BASE / f"{programa}.exe"
+    if local.is_file():
+        return str(local)
+    return shutil.which(programa)
+
+
+# ffmpeg viaja dentro del .exe porque sin el no se pueden unir las pistas de
+# video y audio, que YouTube sirve separadas por encima de 360p. ffprobe lo
+# acompana: yt-dlp lo usa para inspeccionar los formatos antes de unirlos.
+for programa in ("ffmpeg", "ffprobe"):
+    ruta = buscar_ffmpeg(programa)
+    if ruta:
+        binaries += [(ruta, ".")]
+    else:
+        print(f"AVISO: no se encontro {programa}. El .exe solo podra descargar "
+              f"videos en la calidad que YouTube entregue ya combinada.")
 
 # yt-dlp trae cientos de extractores que se cargan de forma dinamica:
 # sin collect_all, PyInstaller no los detecta y el .exe no descarga nada.
