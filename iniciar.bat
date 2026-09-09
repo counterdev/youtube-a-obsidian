@@ -40,6 +40,14 @@ if not exist "%PY_EXE%" (
     echo.
 )
 
+rem Completa las dependencias si el entorno viene de una version anterior.
+"%PY_EXE%" -c "import yt_dlp, anthropic, openai" >nul 2>&1
+if errorlevel 1 (
+    echo  Completando dependencias...
+    "%PY_EXE%" -m pip install -r requirements.txt --quiet --disable-pip-version-check
+    if errorlevel 1 goto :error
+)
+
 "%PY_EXE%" notavideo_app.py
 if errorlevel 1 goto :error
 

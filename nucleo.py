@@ -185,6 +185,8 @@ def _descargar(url, langs, carpeta, automaticos):
 
     opciones = {
         "skip_download": True,
+        "noplaylist": True,
+        "socket_timeout": 30,
         "writesubtitles": not automaticos,
         "writeautomaticsub": automaticos,
         "subtitleslangs": [x.strip() for x in langs.split(",") if x.strip()],
@@ -195,8 +197,27 @@ def _descargar(url, langs, carpeta, automaticos):
         "noprogress": True,
     }
 
-    with yt_dlp.YoutubeDL(opciones) as ydl:
-        info = ydl.extract_info(url, download=True)
+    try:
+        with yt_dlp.YoutubeDL(opciones) as ydl:
+            info = ydl.extract_info(url, download=True)
+    except Exception as fallo:
+        # YouTube corta la pasada a medias cuando limita alguna descarga. Si
+        # algun subtitulo alcanzo a bajar, sirve igual: se rescatan los
+        # metadatos con una consulta que ya no toca los subtitulos.
+        vtts = list(carpeta.glob("*.vtt"))
+        if not vtts:
+            raise
+        sin_subs = {**opciones, "writesubtitles": False, "writeautomaticsub": False}
+        try:
+            with yt_dlp.YoutubeDL(sin_subs) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except Exception:
+            info = None
+        if not info:
+            # Sin metadatos no hay nota que escribir, y lo que hay que explicar
+            # es el fallo de origen, no el del rescate.
+            raise fallo from None
+        return info, vtts
 
     return info, list(carpeta.glob("*.vtt"))
 
@@ -237,7 +258,10 @@ def obtener(url: str, langs: str = IDIOMAS_POR_DEFECTO,
             if original:
                 aviso(f"No hay subtítulos del autor. Usando los automáticos "
                       f"en el idioma original del video ({original})…")
-                langs_auto = f"{original}-orig,{original},{langs}"
+                # Solo el idioma original: anadir es/en obligaria a YouTube a
+                # generar traducciones automaticas, y esas las limita con un
+                # HTTP 429 que tumbaba la descarga completa.
+                langs_auto = f"{original}-orig,{original}"
                 preferencias = _preferencias(langs_auto)
             else:
                 aviso("No hay subtítulos del autor. Usando los automáticos…")
@@ -247,6 +271,19 @@ def obtener(url: str, langs: str = IDIOMAS_POR_DEFECTO,
                 info, vtts = _descargar(url, langs_auto, carpeta, automaticos=True)
             except Exception as exc:
                 raise ErrorTranscripcion(_explicar(exc)) from exc
+
+            if not vtts and langs_auto != langs:
+                # YouTube a veces declara un idioma de audio que no coincide con
+                # el de sus propios subtitulos automaticos. Ahi no queda mas que
+                # aceptar los idiomas pedidos, aunque sean traducciones.
+                aviso("El idioma original no estaba disponible. "
+                      "Probando con los idiomas pedidos…")
+                preferencias = _preferencias(langs)
+                try:
+                    info, vtts = _descargar(url, langs, carpeta, automaticos=True)
+                except Exception as exc:
+                    raise ErrorTranscripcion(_explicar(exc)) from exc
+
             origen = "automáticos de YouTube"
 
         if not vtts:

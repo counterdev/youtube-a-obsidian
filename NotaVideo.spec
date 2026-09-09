@@ -13,7 +13,7 @@ datas, binaries, hiddenimports = [], [], []
 
 # yt-dlp trae cientos de extractores que se cargan de forma dinamica:
 # sin collect_all, PyInstaller no los detecta y el .exe no descarga nada.
-for paquete in ("yt_dlp", "anthropic"):
+for paquete in ("yt_dlp", "anthropic", "openai"):
     d, b, h = collect_all(paquete)
     datas += d
     binaries += b

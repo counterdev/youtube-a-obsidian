@@ -11,20 +11,8 @@ from __future__ import annotations
 import re
 from datetime import date
 
-# Modelos ofrecidos. Ambos admiten pensamiento adaptativo y niveles de esfuerzo.
-MODELOS = {
-    "Claude Opus 5 — mejor calidad": "claude-opus-5",
-    "Claude Sonnet 5 — más económico": "claude-sonnet-5",
-}
-MODELO_POR_DEFECTO = "claude-opus-5"
+import proveedores
 
-# Dolares por millon de tokens, para estimar lo que costo cada video.
-PRECIOS = {
-    "claude-opus-5": (5.00, 25.00),
-    "claude-sonnet-5": (2.00, 10.00),
-}
-
-MAX_TOKENS = 64000
 MAX_CONTINUACIONES = 3
 
 # Se anexa a cada prompt para adaptarlo a esta aplicacion: aqui el modelo no
@@ -89,108 +77,66 @@ def extraer_prompt(texto: str) -> str:
     return texto.strip()
 
 
-def crear_cliente(api_key: str, workspace_id: str = ""):
-    try:
-        import anthropic
-    except ImportError as exc:
-        raise ErrorGeneracion(
-            "Falta la librería de Claude.\nInstálala con: pip install anthropic"
-        ) from exc
-
+def crear_cliente(prov, api_key: str, workspace_id: str = ""):
+    """Devuelve el cliente del SDK que corresponda al dialecto del proveedor."""
     if not api_key or not api_key.strip():
         raise ErrorGeneracion("No hay API key configurada.")
+    api_key = api_key.strip()
 
-    # Las claves de organizacion no estan asociadas a un espacio de trabajo, y la
-    # API exige que cada peticion diga a cual cargar el uso.
-    cabeceras = {}
-    if workspace_id and workspace_id.strip():
-        cabeceras["anthropic-workspace-id"] = workspace_id.strip()
+    if prov.dialecto == "anthropic":
+        try:
+            import anthropic
+        except ImportError as exc:
+            raise ErrorGeneracion(
+                "Falta la librería de Claude.\nInstálala con: pip install anthropic"
+            ) from exc
 
-    return anthropic.Anthropic(api_key=api_key.strip(),
-                               default_headers=cabeceras or None)
+        # Las claves de organizacion no estan asociadas a un espacio de trabajo, y
+        # la API exige que cada peticion diga a cual cargar el uso.
+        cabeceras = {}
+        if workspace_id and workspace_id.strip():
+            cabeceras["anthropic-workspace-id"] = workspace_id.strip()
+
+        return anthropic.Anthropic(api_key=api_key,
+                                   default_headers=cabeceras or None)
+
+    try:
+        import openai
+    except ImportError as exc:
+        raise ErrorGeneracion(
+            "Falta la librería para proveedores compatibles con OpenAI.\n"
+            "Instálala con: pip install openai"
+        ) from exc
+
+    if not prov.base_url.strip():
+        raise ErrorGeneracion(
+            "Este proveedor necesita una URL base.\n\n"
+            "Pégala en el campo «URL base» de Opciones; la publica el propio "
+            "proveedor en su documentación de API."
+        )
+
+    return openai.OpenAI(api_key=api_key, base_url=prov.base_url.strip())
 
 
-def _pedir(cliente, modelo, sistema, mensajes, avisar=None):
+def _pedir(cliente, prov, modelo, sistema, mensajes, avisar=None):
     """
-    Una llamada con streaming, continuando sola si la respuesta topa el límite.
+    Pide el texto al modelo, continuando sola si la respuesta topa el límite.
 
     Devuelve (texto, tokens_entrada, tokens_salida).
     """
-    import anthropic
+    llamar = _llamar_anthropic if prov.dialecto == "anthropic" else _llamar_openai
 
     partes: list[str] = []
     entrada = salida = 0
     historial = list(mensajes)
 
     for intento in range(MAX_CONTINUACIONES + 1):
-        try:
-            with cliente.messages.stream(
-                model=modelo,
-                max_tokens=MAX_TOKENS,
-                thinking={"type": "adaptive"},
-                system=[{
-                    "type": "text",
-                    "text": sistema,
-                    "cache_control": {"type": "ephemeral"},
-                }],
-                messages=historial,
-            ) as flujo:
-                respuesta = flujo.get_final_message()
-        except anthropic.AuthenticationError as exc:
-            raise ErrorGeneracion(
-                "La API key no es válida. Revísala en Opciones."
-            ) from exc
-        except anthropic.PermissionDeniedError as exc:
-            raise ErrorGeneracion(
-                "La API key no tiene permiso para usar este modelo."
-            ) from exc
-        except anthropic.NotFoundError as exc:
-            raise ErrorGeneracion(f"El modelo {modelo} no está disponible.") from exc
-        except anthropic.RateLimitError as exc:
-            raise ErrorGeneracion(
-                "Alcanzaste el límite de uso de la API. Espera un momento "
-                "y vuelve a intentar."
-            ) from exc
-        except anthropic.APIStatusError as exc:
-            if exc.status_code >= 500:
-                raise ErrorGeneracion(
-                    "La API de Claude tuvo un problema temporal. Intenta de nuevo."
-                ) from exc
-            detalle = str(exc).lower()
-            if "must be a valid workspace" in detalle:
-                raise ErrorGeneracion(
-                    "El valor del campo «Workspace» no es un ID válido.\n\n"
-                    "Los identificadores de espacio de trabajo empiezan con "
-                    "«wrkspc_». Si copiaste un código con guiones del tipo "
-                    "98bc9feb-a7bf-…, ese no es.\n\n"
-                    "Lo más simple es dejar ese campo vacío y crear una API key "
-                    "nueva dentro de un espacio de trabajo: en console.anthropic.com, "
-                    "Settings → API keys → Create Key, y ahí eliges el workspace."
-                ) from exc
-            if "not scoped to a workspace" in detalle:
-                raise ErrorGeneracion(
-                    "Tu API key es de organización y no está asignada a un espacio "
-                    "de trabajo, así que la API no sabe a cuál cargar el uso.\n\n"
-                    "Lo más simple: crea una API key nueva dentro de un espacio de "
-                    "trabajo, en console.anthropic.com → Settings → API keys → "
-                    "Create Key, eligiendo el workspace. Con esa clave, deja el "
-                    "campo «Workspace» vacío.\n\n"
-                    "Si prefieres conservar la clave actual, pega en ese campo el ID "
-                    "del espacio de trabajo, que empieza con «wrkspc_»."
-                ) from exc
-            raise ErrorGeneracion(f"Error de la API: {exc.message}") from exc
-        except anthropic.APIConnectionError as exc:
-            raise ErrorGeneracion(
-                "No hay conexión con la API de Claude. Revisa tu internet."
-            ) from exc
-
-        entrada += respuesta.usage.input_tokens
-        salida += respuesta.usage.output_tokens
-
-        texto = "".join(b.text for b in respuesta.content if b.type == "text")
+        texto, ent, sal, cortado = llamar(cliente, prov, modelo, sistema, historial)
+        entrada += ent
+        salida += sal
         partes.append(texto)
 
-        if respuesta.stop_reason != "max_tokens":
+        if not cortado:
             break
 
         if intento == MAX_CONTINUACIONES:
@@ -209,7 +155,142 @@ def _pedir(cliente, modelo, sistema, mensajes, avisar=None):
                 "de lo ya escrito ni añadas comentarios: solo el resto del archivo."},
         ]
 
-    return _desenvolver("".join(partes)), entrada, salida
+    result = _desenvolver("".join(partes))
+    if not result.strip():
+        raise ErrorGeneracion(
+            f"{prov.nombre} no devolvió texto para la nota. Revisa el modelo elegido.")
+    return result, entrada, salida
+
+
+def _llamar_anthropic(cliente, prov, modelo, sistema, historial):
+    """Una llamada con el SDK de Anthropic. Devuelve (texto, ent, sal, cortado)."""
+    import anthropic
+
+    try:
+        with cliente.messages.stream(
+            model=modelo,
+            max_tokens=prov.max_tokens,
+            system=[{
+                "type": "text",
+                "text": sistema,
+                "cache_control": {"type": "ephemeral"},
+            }],
+            messages=historial,
+        ) as flujo:
+            respuesta = flujo.get_final_message()
+    except anthropic.AuthenticationError as exc:
+        raise ErrorGeneracion(
+            "La API key no es válida. Revísala en Opciones."
+        ) from exc
+    except anthropic.PermissionDeniedError as exc:
+        raise ErrorGeneracion(
+            "La API key no tiene permiso para usar este modelo."
+        ) from exc
+    except anthropic.NotFoundError as exc:
+        raise ErrorGeneracion(f"El modelo {modelo} no está disponible.") from exc
+    except anthropic.RateLimitError as exc:
+        raise ErrorGeneracion(
+            "Alcanzaste el límite de uso de la API. Espera un momento "
+            "y vuelve a intentar."
+        ) from exc
+    except anthropic.APIStatusError as exc:
+        if exc.status_code >= 500:
+            raise ErrorGeneracion(
+                "La API de Claude tuvo un problema temporal. Intenta de nuevo."
+            ) from exc
+        detalle = str(exc).lower()
+        if "must be a valid workspace" in detalle:
+            raise ErrorGeneracion(
+                "El valor del campo «Workspace» no es un ID válido.\n\n"
+                "Los identificadores de espacio de trabajo empiezan con "
+                "«wrkspc_». Si copiaste un código con guiones del tipo "
+                "98bc9feb-a7bf-…, ese no es.\n\n"
+                "Lo más simple es dejar ese campo vacío y crear una API key "
+                "nueva dentro de un espacio de trabajo: en console.anthropic.com, "
+                "Settings → API keys → Create Key, y ahí eliges el workspace."
+            ) from exc
+        if "not scoped to a workspace" in detalle:
+            raise ErrorGeneracion(
+                "Tu API key es de organización y no está asignada a un espacio "
+                "de trabajo, así que la API no sabe a cuál cargar el uso.\n\n"
+                "Lo más simple: crea una API key nueva dentro de un espacio de "
+                "trabajo, en console.anthropic.com → Settings → API keys → "
+                "Create Key, eligiendo el workspace. Con esa clave, deja el "
+                "campo «Workspace» vacío."
+            ) from exc
+        raise ErrorGeneracion(f"Error de la API: {exc.message}") from exc
+    except anthropic.APIConnectionError as exc:
+        raise ErrorGeneracion(
+            "No hay conexión con la API de Claude. Revisa tu internet."
+        ) from exc
+
+    texto = "".join(b.text for b in respuesta.content if b.type == "text")
+    return (texto, respuesta.usage.input_tokens, respuesta.usage.output_tokens,
+            respuesta.stop_reason == "max_tokens")
+
+
+def _llamar_openai(cliente, prov, modelo, sistema, historial):
+    """
+    Una llamada en el dialecto de OpenAI, que casi todos los demas proveedores
+    hablan. Devuelve (texto, ent, sal, cortado).
+    """
+    import openai
+
+    mensajes = [{"role": "system", "content": sistema}] + list(historial)
+    peticion = {"model": modelo, "messages": mensajes,
+                "max_tokens": prov.max_tokens}
+
+    try:
+        try:
+            respuesta = cliente.chat.completions.create(**peticion)
+        except openai.BadRequestError as exc:
+            # Los modelos mas nuevos de OpenAI rechazan max_tokens y exigen
+            # max_completion_tokens; el resto de proveedores solo acepta el viejo.
+            if "max_completion_tokens" not in str(exc):
+                raise
+            peticion["max_completion_tokens"] = peticion.pop("max_tokens")
+            respuesta = cliente.chat.completions.create(**peticion)
+    except openai.AuthenticationError as exc:
+        raise ErrorGeneracion(
+            f"{prov.nombre} rechazó la API key. Revísala en Opciones."
+        ) from exc
+    except openai.PermissionDeniedError as exc:
+        raise ErrorGeneracion(
+            f"La API key no tiene permiso para usar {modelo}."
+        ) from exc
+    except openai.NotFoundError as exc:
+        raise ErrorGeneracion(
+            f"{prov.nombre} no reconoce el modelo «{modelo}».\n\n"
+            "Revisa el nombre exacto en la documentación del proveedor: cada uno "
+            "usa los suyos y los renueva seguido."
+        ) from exc
+    except openai.RateLimitError as exc:
+        raise ErrorGeneracion(
+            f"{prov.nombre} limitó el uso, o la cuenta se quedó sin saldo. "
+            "Espera un momento o revisa tu saldo."
+        ) from exc
+    except openai.APIStatusError as exc:
+        if exc.status_code >= 500:
+            raise ErrorGeneracion(
+                f"{prov.nombre} tuvo un problema temporal. Intenta de nuevo."
+            ) from exc
+        raise ErrorGeneracion(f"Error de {prov.nombre}: {exc}") from exc
+    except openai.APIConnectionError as exc:
+        raise ErrorGeneracion(
+            f"No hay conexión con {prov.nombre} ({prov.base_url}).\n\n"
+            "Revisa tu internet y que la URL base sea la correcta."
+        ) from exc
+
+    if not respuesta.choices:
+        raise ErrorGeneracion(f"{prov.nombre} devolvió una respuesta vacía.")
+
+    eleccion = respuesta.choices[0]
+    texto = eleccion.message.content or ""
+    uso = respuesta.usage
+    return (texto,
+            getattr(uso, "prompt_tokens", 0) if uso else 0,
+            getattr(uso, "completion_tokens", 0) if uso else 0,
+            eleccion.finish_reason == "length")
 
 
 def _desenvolver(texto: str) -> str:
@@ -221,12 +302,17 @@ def _desenvolver(texto: str) -> str:
     return texto
 
 
-def costo(modelo: str, entrada: int, salida: int) -> float:
-    precio_in, precio_out = PRECIOS.get(modelo, (0.0, 0.0))
+def costo(prov, modelo: str, entrada: int, salida: int) -> float:
+    """
+    Estima el gasto en dolares. Devuelve 0 si no conocemos los precios del
+    proveedor, que es lo normal salvo en Anthropic: cada uno los cambia por su
+    cuenta y una tabla desactualizada enganaria mas que ayudar.
+    """
+    precio_in, precio_out = prov.precios.get(modelo, (0.0, 0.0))
     return entrada / 1_000_000 * precio_in + salida / 1_000_000 * precio_out
 
 
-def nota_base(cliente, modelo, prompt_a, transcripcion_md, avisar=None):
+def nota_base(cliente, prov, modelo, prompt_a, transcripcion_md, avisar=None):
     """Aplica el Prompt A sobre la transcripción y devuelve el markdown de la nota."""
     sistema = (
         extraer_prompt(prompt_a)
@@ -238,7 +324,7 @@ def nota_base(cliente, modelo, prompt_a, transcripcion_md, avisar=None):
         "role": "user",
         "content": "Aquí comienza la transcripción:\n\n---\n\n" + transcripcion_md,
     }]
-    return _pedir(cliente, modelo, sistema, mensajes, avisar)
+    return _pedir(cliente, prov, modelo, sistema, mensajes, avisar)
 
 
 def contar_ideas_clave(nota_md: str) -> int | None:
@@ -257,7 +343,7 @@ def contar_ideas_clave(nota_md: str) -> int | None:
     return total or None
 
 
-def capa_estudio(cliente, modelo, prompt_b, nota_md, avisar=None):
+def capa_estudio(cliente, prov, modelo, prompt_b, nota_md, avisar=None):
     """Aplica el Prompt B sobre la nota base y devuelve el markdown del repaso."""
     sistema = (
         extraer_prompt(prompt_b)
@@ -278,7 +364,7 @@ def capa_estudio(cliente, modelo, prompt_b, nota_md, avisar=None):
         "role": "user",
         "content": "Aquí comienza la nota base:\n\n---\n\n" + nota_md,
     }]
-    return _pedir(cliente, modelo, sistema, mensajes, avisar)
+    return _pedir(cliente, prov, modelo, sistema, mensajes, avisar)
 
 
 def titulo_de(markdown: str, respaldo: str) -> str:

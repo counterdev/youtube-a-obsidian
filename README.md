@@ -30,19 +30,41 @@ etiquetas, así que se integran al grafo desde el primer momento.
 **Solo transcripción** — gratis, sin cuentas ni claves. Baja los subtítulos, los
 limpia y los deja en la bóveda. Sirve tal cual para pegar en cualquier chat.
 
-**Notas completas** — genera además la nota base y el repaso llamando a la API de
-Claude. Necesita una API key de Anthropic, que consigues en
-[console.anthropic.com](https://console.anthropic.com/settings/keys), **creada dentro
-de un espacio de trabajo**: una clave de organización exige además el ID del
-workspace, que se pega en el campo correspondiente.
+**Notas completas** — genera además la nota base y el repaso llamando a un modelo de
+IA. Necesita una API key del proveedor que elijas.
 
-Es de pago por uso. Medido sobre una charla TED de 16 minutos con 2.455 palabras de
-transcripción: **US$ 0,43 con Opus 5**, contando las dos llamadas. Da del orden de
-US$ 0,03 por minuto de video; Sonnet 5 cuesta alrededor de la mitad. La app informa
-el gasto real de cada tanda al terminar.
+## Proveedores
 
-Tu clave se guarda solo en tu equipo, en `%APPDATA%\NotaVideo\config.json`, y no
-se envía a ningún sitio salvo a la API de Anthropic.
+En Opciones eliges con qué IA trabajar. Vienen preparados Anthropic, OpenAI, DeepSeek,
+Google (Gemini), Groq, Mistral, xAI, OpenRouter y Ollama, y **cualquier otro servicio
+compatible con OpenAI** pegando su URL base: eso cubre a casi toda la industria.
+
+| Campo | Para qué sirve |
+|---|---|
+| Proveedor | Rellena la URL y sugiere modelos |
+| URL base | Editable salvo en Anthropic, que resuelve la suya |
+| API key | La del proveedor elegido |
+| Modelo | Escribible: cada proveedor renombra los suyos a su ritmo |
+| Workspace | Solo Anthropic, y solo con claves de organización |
+
+Cada proveedor recuerda su clave, su URL y su modelo por separado, así que puedes
+alternar entre ellos sin volver a escribirlos.
+
+Con **Ollama** el modelo corre en tu propio PC: gratis, sin conexión y sin cuenta
+(la API key puede ser cualquier texto).
+
+### Costo
+
+Es de pago por uso, salvo Ollama. Medido sobre una charla TED de 16 minutos con 2.455
+palabras de transcripción: **US$ 0,43 con Opus 5**, contando las dos llamadas. Da del
+orden de US$ 0,03 por minuto de video; Sonnet 5 cuesta alrededor de la mitad.
+
+La app estima el gasto solo cuando conoce la lista de precios del proveedor. Para el
+resto informa los tokens consumidos: cada empresa cambia sus tarifas por su cuenta y
+una tabla desactualizada engañaría más de lo que ayuda.
+
+Tus claves se guardan solo en tu equipo, en `%APPDATA%\NotaVideo\config.json`, y no
+se envían a ningún sitio salvo al proveedor que elijas.
 
 ## Instalación
 
@@ -122,3 +144,16 @@ bastante mejor.
 ## Licencia
 
 MIT.
+
+## Correcciones de la versión 1.2.1
+
+- Corregido el inicio del procesamiento en ambos modos.
+- Se conservan el proveedor, modelo, URL y clave al procesar o cerrar la app.
+- Ollama permite dejar la clave vacía. La descarga desde YouTube requiere conexión.
+- Se validan la bóveda, el modelo y la URL antes de iniciar.
+- Una respuesta de IA vacía se informa como error, sin guardar una nota vacía.
+- Una tanda informa cuántos videos terminaron y cuántos fallaron.
+- Copiar plantillas conserva las versiones que ya existen en la bóveda.
+
+Verificación local: `python -m unittest -v test_notavideo`.
+Las pruebas usan respuestas de IA simuladas y una bóveda temporal; no consumen saldo.

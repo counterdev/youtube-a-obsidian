@@ -4,3 +4,6 @@ yt-dlp>=2026.08.19
 
 # Solo se usa en el modo de notas completas.
 anthropic>=1.0.0
+# Cubre a DeepSeek, Google, Groq, Ollama y demas proveedores
+# que hablan el dialecto de OpenAI.
+openai>=1.0

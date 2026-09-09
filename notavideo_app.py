@@ -15,14 +15,17 @@ import threading
 import tkinter as tk
 import traceback
 import webbrowser
+from dataclasses import replace
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from urllib.parse import urlparse
 
 import generador
 import nucleo
+import proveedores
 
 APP = "NotaVideo"
-VERSION = "1.1.0"
+VERSION = "1.2.1"
 REPO = "https://github.com/counterdev/youtube-a-obsidian"
 
 CARPETA_NOTAS = "Videos"
@@ -45,11 +48,36 @@ def ruta_recurso(relativa: str) -> Path:
     return base / relativa
 
 
+# Antes del soporte multi-proveedor el modelo se guardaba por su nombre visible.
+MODELOS_ANTIGUOS = {
+    "Claude Opus 5 — mejor calidad": "claude-opus-5",
+    "Claude Sonnet 5 — más económico": "claude-sonnet-5",
+}
+
+
 def cargar_config() -> dict:
     try:
-        return json.loads(ruta_config().read_text(encoding="utf-8"))
+        cfg = json.loads(ruta_config().read_text(encoding="utf-8"))
     except Exception:
         return {}
+    return migrar_config(cfg)
+
+
+def migrar_config(cfg: dict) -> dict:
+    """Adapta la configuracion de versiones anteriores, que solo hablaban con Claude."""
+    if not isinstance(cfg, dict):
+        return {}
+    if not cfg or "claves" in cfg:
+        return cfg
+
+    anthropic = proveedores.CATALOGO[0].nombre
+    cfg.setdefault("proveedor", anthropic)
+    cfg["claves"] = {anthropic: cfg.get("api_key", "")}
+    cfg["modelos"] = {anthropic: MODELOS_ANTIGUOS.get(cfg.get("modelo", ""),
+                                      cfg.get("modelo") or "claude-sonnet-5")}
+    cfg["urls"] = {}
+    cfg["modelo"] = cfg["modelos"][anthropic]
+    return cfg
 
 
 def guardar_config(datos: dict) -> None:
@@ -89,6 +117,25 @@ class Aplicacion(ttk.Frame):
 
         self._construir()
         self._revisar_cola()
+        raiz.protocol("WM_DELETE_WINDOW", self.close_app)
+
+    def save_settings(self) -> None:
+        self._recordar_proveedor()
+        self.cfg.update({
+            "proveedor": self.var_proveedor.get(),
+            "boveda": self.var_boveda.get().strip(),
+            "modo": self.var_modo.get(),
+            "workspace_id": self.var_workspace.get().strip(),
+        })
+        self.cfg.pop("api_key", None)
+        guardar_config(self.cfg)
+
+    def close_app(self) -> None:
+        if self.trabajando and not messagebox.askyesno(
+                APP, "Hay un procesamiento en curso. ¿Quieres cerrar y detenerlo?"):
+            return
+        self.save_settings()
+        self.raiz.destroy()
 
     # ------------------------------------------------------------------ interfaz
 
@@ -145,47 +192,67 @@ class Aplicacion(ttk.Frame):
         fila += 1
 
         # --- ajustes de IA
-        self.marco_ia = ttk.LabelFrame(self, text=" Claude ", padding=10)
+        self.marco_ia = ttk.LabelFrame(self, text=" Proveedor de IA ", padding=10)
         self.marco_ia.grid(row=fila, column=0, sticky="ew", pady=(12, 0))
         self.marco_ia.columnconfigure(1, weight=1)
 
-        ttk.Label(self.marco_ia, text="API key:").grid(row=0, column=0, sticky="w")
-        self.var_key = tk.StringVar(value=self.cfg.get("api_key", "")
-                                    or os.environ.get("ANTHROPIC_API_KEY", ""))
+        ttk.Label(self.marco_ia, text="Proveedor:").grid(row=0, column=0, sticky="w")
+        self.var_proveedor = tk.StringVar(
+            value=self.cfg.get("proveedor", proveedores.POR_DEFECTO))
+        self.combo_prov = ttk.Combobox(
+            self.marco_ia, textvariable=self.var_proveedor, state="readonly",
+            values=[p.nombre for p in proveedores.CATALOGO])
+        self.combo_prov.grid(row=0, column=1, columnspan=2, sticky="ew", padx=(6, 0))
+        self.combo_prov.bind("<<ComboboxSelected>>", self._cambiar_proveedor)
+
+        ttk.Label(self.marco_ia, text="URL base:").grid(row=1, column=0, sticky="w",
+                                                        pady=(8, 0))
+        self.var_url = tk.StringVar(value=self.cfg.get("base_url", ""))
+        self.entrada_url = ttk.Entry(self.marco_ia, textvariable=self.var_url)
+        self.entrada_url.grid(row=1, column=1, columnspan=2, sticky="ew",
+                              padx=(6, 0), pady=(8, 0))
+
+        ttk.Label(self.marco_ia, text="API key:").grid(row=2, column=0, sticky="w",
+                                                       pady=(8, 0))
+        self.var_key = tk.StringVar()
         self.entrada_key = ttk.Entry(self.marco_ia, textvariable=self.var_key,
                                      show="•")
-        self.entrada_key.grid(row=0, column=1, sticky="ew", padx=(6, 6))
+        self.entrada_key.grid(row=2, column=1, sticky="ew", padx=(6, 6), pady=(8, 0))
         self.var_ver = tk.BooleanVar(value=False)
         ttk.Checkbutton(self.marco_ia, text="Ver", variable=self.var_ver,
-                        command=self._alternar_key).grid(row=0, column=2)
-
-        # Solo hace falta para claves de organizacion, que no traen espacio de
-        # trabajo asociado. Con una clave normal se deja vacio.
-        ttk.Label(self.marco_ia, text="Workspace:").grid(row=1, column=0, sticky="w",
-                                                         pady=(8, 0))
-        self.var_workspace = tk.StringVar(value=self.cfg.get("workspace_id", ""))
-        ttk.Entry(self.marco_ia, textvariable=self.var_workspace).grid(
-            row=1, column=1, columnspan=2, sticky="ew", padx=(6, 0), pady=(8, 0))
-        ttk.Label(self.marco_ia,
-                  text="Opcional: solo si tu clave es de organización (wrkspc_…)",
-                  foreground="#666").grid(row=2, column=1, columnspan=2,
-                                          sticky="w", padx=(6, 0))
+                        command=self._alternar_key).grid(row=2, column=2, pady=(8, 0))
 
         ttk.Label(self.marco_ia, text="Modelo:").grid(row=3, column=0, sticky="w",
                                                       pady=(8, 0))
-        self.var_modelo = tk.StringVar(
-            value=self.cfg.get("modelo", list(generador.MODELOS)[0]))
-        ttk.Combobox(self.marco_ia, textvariable=self.var_modelo, state="readonly",
-                     values=list(generador.MODELOS)).grid(row=3, column=1,
-                                                          columnspan=2, sticky="ew",
-                                                          padx=(6, 0), pady=(8, 0))
+        self.var_modelo = tk.StringVar(value=self.cfg.get("modelo", ""))
+        # Escribible a proposito: cada proveedor renombra sus modelos a su ritmo
+        # y una lista cerrada quedaria obsoleta.
+        self.combo_modelo = ttk.Combobox(self.marco_ia, textvariable=self.var_modelo)
+        self.combo_modelo.grid(row=3, column=1, columnspan=2, sticky="ew",
+                               padx=(6, 0), pady=(8, 0))
 
-        enlace = ttk.Label(self.marco_ia,
-                           text="Conseguir una API key en console.anthropic.com",
-                           foreground="#0a58ca", cursor="hand2")
-        enlace.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        enlace.bind("<Button-1>",
-                    lambda _e: webbrowser.open("https://console.anthropic.com/settings/keys"))
+        # Solo hace falta para claves de organizacion de Anthropic.
+        self.fila_workspace = ttk.Frame(self.marco_ia)
+        self.fila_workspace.grid(row=4, column=0, columnspan=3, sticky="ew",
+                                 pady=(8, 0))
+        self.fila_workspace.columnconfigure(1, weight=1)
+        ttk.Label(self.fila_workspace, text="Workspace:").grid(row=0, column=0,
+                                                               sticky="w")
+        self.var_workspace = tk.StringVar(value=self.cfg.get("workspace_id", ""))
+        ttk.Entry(self.fila_workspace, textvariable=self.var_workspace).grid(
+            row=0, column=1, sticky="ew", padx=(6, 0))
+        ttk.Label(self.fila_workspace,
+                  text="Opcional: solo si tu clave es de organización (wrkspc_…)",
+                  foreground="#666").grid(row=1, column=1, sticky="w", padx=(6, 0))
+
+        self.nota_prov = ttk.Label(self.marco_ia, text="", foreground="#666",
+                                   wraplength=430, justify="left")
+        self.nota_prov.grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        self.enlace = ttk.Label(self.marco_ia, text="", foreground="#0a58ca",
+                                cursor="hand2")
+        self.enlace.grid(row=6, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.enlace.bind("<Button-1>", self._abrir_claves)
         fila += 1
 
         # --- acciones
@@ -219,6 +286,7 @@ class Aplicacion(ttk.Frame):
         self.log.tag_configure("ok", foreground="#89d185")
         self.log.tag_configure("aviso", foreground="#dcdcaa")
 
+        self._aplicar_proveedor(limpiar=True)
         self._alternar_modo()
         self._escribir(f"{APP} {VERSION}. Pega una URL y presiona Procesar.")
 
@@ -227,11 +295,65 @@ class Aplicacion(ttk.Frame):
 
     def _alternar_modo(self) -> None:
         estado = "normal" if self.var_modo.get() == "completo" else "disabled"
-        for hijo in self.marco_ia.winfo_children():
-            try:
-                hijo.configure(state=estado)
-            except tk.TclError:
-                pass
+        for marco in (self.marco_ia, self.fila_workspace):
+            for hijo in marco.winfo_children():
+                try:
+                    hijo.configure(state=estado)
+                except tk.TclError:
+                    pass
+        if estado == "normal":
+            self.combo_prov.configure(state="readonly")
+            self._aplicar_proveedor()
+
+    def _cambiar_proveedor(self, _evento=None) -> None:
+        """Guarda lo escrito para el proveedor anterior y carga el nuevo."""
+        self._recordar_proveedor()
+        self._aplicar_proveedor(limpiar=True)
+
+    def _recordar_proveedor(self) -> None:
+        """Cada proveedor conserva su clave y su URL, para poder alternar."""
+        anterior = getattr(self, "_prov_actual", None)
+        if not anterior:
+            return
+        self.cfg.setdefault("claves", {})[anterior] = self.var_key.get().strip()
+        self.cfg.setdefault("urls", {})[anterior] = self.var_url.get().strip()
+        self.cfg.setdefault("modelos", {})[anterior] = self.var_modelo.get().strip()
+
+    def _aplicar_proveedor(self, limpiar: bool = False) -> None:
+        """Deja la interfaz acorde al proveedor elegido."""
+        prov = proveedores.obtener(self.var_proveedor.get())
+        self._prov_actual = prov.nombre
+        self.var_proveedor.set(prov.nombre)
+
+        if limpiar:
+            self.var_key.set(self.cfg.get("claves", {}).get(prov.nombre, ""))
+            if not self.var_key.get() and prov.dialecto == "anthropic":
+                self.var_key.set(os.environ.get("ANTHROPIC_API_KEY", ""))
+            self.var_url.set(self.cfg.get("urls", {}).get(prov.nombre)
+                             or prov.base_url)
+            self.var_modelo.set(self.cfg.get("modelos", {}).get(prov.nombre)
+                                or (prov.modelos[0] if prov.modelos else ""))
+
+        self.combo_modelo.configure(values=list(prov.modelos))
+
+        # Anthropic resuelve su propia URL; el resto la necesita explicita.
+        self.entrada_url.configure(state="normal" if prov.editable else "disabled")
+        if not prov.editable:
+            self.var_url.set("")
+
+        if prov.dialecto == "anthropic":
+            self.fila_workspace.grid()
+        else:
+            self.fila_workspace.grid_remove()
+
+        self.nota_prov.configure(text=prov.nota)
+        self.enlace.configure(
+            text=f"Conseguir una API key de {prov.nombre}" if prov.url_claves else "")
+
+    def _abrir_claves(self, _evento=None) -> None:
+        prov = proveedores.obtener(self.var_proveedor.get())
+        if prov.url_claves:
+            webbrowser.open(prov.url_claves)
 
     def _elegir_boveda(self) -> None:
         elegida = filedialog.askdirectory(title="Elige la carpeta de tu bóveda")
@@ -240,13 +362,16 @@ class Aplicacion(ttk.Frame):
 
     def _copiar_plantillas(self) -> None:
         boveda = Path(self.var_boveda.get().strip())
-        if not boveda.is_dir():
+        if not self.var_boveda.get().strip() or not boveda.is_dir():
             messagebox.showwarning(APP, "Primero elige una bóveda válida.")
             return
         destino = boveda / CARPETA_PLANTILLAS
         destino.mkdir(parents=True, exist_ok=True)
         for nombre, recurso in ((NOMBRE_PROMPT_A, "prompts/prompt-a-nota-base.md"),
                                 (NOMBRE_PROMPT_B, "prompts/prompt-b-capa-estudio.md")):
+            if (destino / nombre).exists():
+                self._escribir(f"Se conserva la plantilla existente: {nombre}", "aviso")
+                continue
             (destino / nombre).write_text(
                 ruta_recurso(recurso).read_text(encoding="utf-8"), encoding="utf-8")
         self._escribir(f"Plantillas copiadas a {destino}", "ok")
@@ -291,26 +416,43 @@ class Aplicacion(ttk.Frame):
             return
 
         boveda = Path(self.var_boveda.get().strip())
-        if not boveda.is_dir():
+        if not self.var_boveda.get().strip() or not boveda.is_dir():
             messagebox.showwarning(APP, "Elige la carpeta de tu bóveda de Obsidian.")
             return
 
         completo = self.var_modo.get() == "completo"
+        prov = proveedores.obtener(self.var_proveedor.get())
+        if prov.editable:
+            prov = replace(prov, base_url=self.var_url.get().strip())
+        modelo = self.var_modelo.get().strip()
         clave = self.var_key.get().strip()
+        if prov.nombre == "Ollama (en este PC)" and not clave:
+            clave = "ollama"
         if completo and not clave:
             messagebox.showwarning(
                 APP,
-                "El modo de notas completas necesita una API key de Anthropic.\n\n"
+                f"El modo de notas completas necesita una API key de {prov.nombre}.\n\n"
                 "Ponla en el campo API key, o cambia a «Solo transcripción».")
             return
 
+        if completo and not modelo:
+            messagebox.showwarning(APP, "Escribe el modelo que quieres usar.")
+            return
+        if completo and prov.editable:
+            endpoint = urlparse(prov.base_url)
+            if endpoint.scheme not in ("http", "https") or not endpoint.hostname:
+                messagebox.showwarning(APP, "Escribe una URL base válida (http:// o https://).")
+                return
+
+        self._recordar_proveedor()
         self.cfg.update({
+            "proveedor": prov.nombre,
             "boveda": str(boveda),
             "modo": self.var_modo.get(),
             "modelo": self.var_modelo.get(),
-            "api_key": clave,
             "workspace_id": self.var_workspace.get().strip(),
         })
+        self.cfg.pop("api_key", None)
         guardar_config(self.cfg)
 
         self.trabajando = True
@@ -320,22 +462,23 @@ class Aplicacion(ttk.Frame):
 
         hilo = threading.Thread(
             target=self._trabajar,
-            args=(urls, boveda, completo, clave, self.var_workspace.get().strip()),
+            args=(urls, boveda, completo, clave, prov, modelo,
+                  self.var_workspace.get().strip()),
             daemon=True)
         hilo.start()
 
     def _trabajar(self, urls, boveda: Path, completo: bool, clave: str,
-                  workspace: str = "") -> None:
+                  prov, modelo: str, workspace: str = "") -> None:
         pasos = 0
+        failures = 0
         gastado = 0.0
-        modelo = generador.MODELOS.get(self.var_modelo.get(),
-                                       generador.MODELO_POR_DEFECTO)
+        tokens = 0
 
         cliente = None
         if completo:
             try:
-                cliente = generador.crear_cliente(clave, workspace)
-            except generador.ErrorGeneracion as exc:
+                cliente = generador.crear_cliente(prov, clave, workspace)
+            except Exception as exc:
                 self._avisar(str(exc), "error")
                 self.mensajes.put(("fin", None))
                 return
@@ -369,9 +512,10 @@ class Aplicacion(ttk.Frame):
                 prompt_a = leer_prompt(boveda, NOMBRE_PROMPT_A,
                                        "prompts/prompt-a-nota-base.md")
                 md_nota, ent, sal = generador.nota_base(
-                    cliente, modelo, prompt_a, trans.a_markdown(),
+                    cliente, prov, modelo, prompt_a, trans.a_markdown(),
                     avisar=lambda t: self._avisar("  " + t, "aviso"))
-                gastado += generador.costo(modelo, ent, sal)
+                gastado += generador.costo(prov, modelo, ent, sal)
+                tokens += ent + sal
 
                 titulo_nota = generador.titulo_de(md_nota, trans.titulo)
                 destino_notas = boveda / CARPETA_NOTAS
@@ -387,9 +531,10 @@ class Aplicacion(ttk.Frame):
                 prompt_b = leer_prompt(boveda, NOMBRE_PROMPT_B,
                                        "prompts/prompt-b-capa-estudio.md")
                 md_repaso, ent, sal = generador.capa_estudio(
-                    cliente, modelo, prompt_b, md_nota,
+                    cliente, prov, modelo, prompt_b, md_nota,
                     avisar=lambda t: self._avisar("  " + t, "aviso"))
-                gastado += generador.costo(modelo, ent, sal)
+                gastado += generador.costo(prov, modelo, ent, sal)
+                tokens += ent + sal
 
                 destino_repasos = boveda / CARPETA_REPASOS
                 destino_repasos.mkdir(parents=True, exist_ok=True)
@@ -401,14 +546,29 @@ class Aplicacion(ttk.Frame):
                 self.mensajes.put(("progreso", pasos))
 
             except (nucleo.ErrorTranscripcion, generador.ErrorGeneracion) as exc:
+                failures += 1
                 self._avisar(f"  {exc}", "error")
             except Exception:
+                failures += 1
                 self._avisar("  Error inesperado:", "error")
                 self._avisar("  " + traceback.format_exc(limit=3), "error")
+            finally:
+                pasos = indice * (3 if completo else 1)
+                self.mensajes.put(("progreso", pasos))
 
-        self._avisar("\nListo.", "ok")
+        self._avisar(f"\nTerminados: {len(urls) - failures}. Con errores: {failures}.",
+                     "aviso" if failures else "ok")
+        if cliente is not None:
+            try:
+                cliente.close()
+            except Exception:
+                pass
         if gastado:
             self._avisar(f"Costo aproximado de esta tanda: US$ {gastado:.3f}")
+        elif tokens:
+            # Sin tabla de precios del proveedor, los tokens son el unico dato
+            # honesto que podemos dar.
+            self._avisar(f"Tokens usados en esta tanda: {tokens:,}".replace(",", "."))
         self.mensajes.put(("fin", None))
 
 
